@@ -1,79 +1,73 @@
-from flask import Flask, render_template, request, redirect, session, flash
+from flask import Flask, render_template, request, redirect, url_for, flash
+from datetime import datetime
 import pandas as pd
 import os
-from datetime import datetime
+import pyrebase
 
 app = Flask(__name__)
-app.secret_key = 'rasappaaa123'
+app.secret_key = 'your-secret-key'
 
-# 🧠 Local DB (dictionary)
-users = {}
+# 🔥 Firebase config
+firebase_config = {
+    "apiKey": "AIzaSyAy8oWoafy7D4dmRteUTbSiwi2cgvv2R0o",
+    "authDomain": "finance-c2952.firebaseapp.com",
+    "databaseURL": "https://finance-c2952-default-rtdb.firebaseio.com",
+    "projectId": "finance-c2952",
+    "storageBucket": "finance-c2952.appspot.com",
+    "messagingSenderId": "930628148516",
+    "appId": "1:930628148516:web:ba21b485b0fc40831c67b1",
+    "measurementId": "G-5XNK4YTRD2"
+}
+
+firebase = pyrebase.initialize_app(firebase_config)
+db = firebase.database()
+
+# 📅 Helper to get today's date string
+def today_str():
+    return datetime.now().strftime("%Y-%m-%d")
+
+# 📁 Excel file path (saved by day)
+def get_excel_path():
+    return f"data_{today_str()}.xlsx"
 
 @app.route('/')
 def index():
-    return redirect('/login')
+    return render_template("main.html")
 
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        email = request.form['email']
-        password = request.form['password']
-        if email in users and users[email] == password:
-            session['user'] = email
-            return redirect('/home')
-        else:
-            flash("Invalid credentials!", "danger")
-    return render_template('main.html', page='login', page_title="Login")
-
-@app.route('/register', methods=['GET', 'POST'])
+@app.route('/register', methods=["POST"])
 def register():
-    if request.method == 'POST':
-        email = request.form['email']
-        password = request.form['password']
-        if email in users:
-            flash("User already exists!", "danger")
-        else:
-            users[email] = password
-            flash("Registration successful! Please login.", "success")
-            return redirect('/login')
-    return render_template('main.html', page='register', page_title="Register")
+    name = request.form['name']
+    regno = request.form['regno']
+    amount = float(request.form['amount'])
 
-@app.route('/home', methods=['GET', 'POST'])
-def home():
-    if 'user' not in session:
-        return redirect('/login')
+    # Save to Firebase
+    db.child("users").child(regno).set({
+        "name": name,
+        "regno": regno,
+        "amount": amount,
+        "date": today_str()
+    })
 
-    today = datetime.now().strftime("%d-%m-%Y")
-    month_file = datetime.now().strftime("%B-%Y") + ".xlsx"
-
-    if os.path.exists(month_file):
-        df = pd.read_excel(month_file)
+    # Save to Excel
+    excel_path = get_excel_path()
+    new_data = {"Name": name, "RegNo": regno, "Amount": amount, "Date": today_str()}
+    
+    if os.path.exists(excel_path):
+        df = pd.read_excel(excel_path)
+        df = df.append(new_data, ignore_index=True)
     else:
-        df = pd.DataFrame(columns=["Reg No", "Name", "Initial Due", "Remaining Due", "Last Updated"])
+        df = pd.DataFrame([new_data])
+    
+    df.to_excel(excel_path, index=False)
+    flash("Customer registered and data saved ✅")
+    return redirect(url_for("index"))
 
-    if request.method == 'POST':
-        reg = request.form['reg']
-        name = request.form['name']
-        due = float(request.form['due'])
+@app.route('/data')
+def view_data():
+    users = db.child("users").get().val()
+    return users if users else {}
 
-        if reg in df["Reg No"].values:
-            df.loc[df["Reg No"] == reg, "Remaining Due"] += due
-            df.loc[df["Reg No"] == reg, "Last Updated"] = today
-        else:
-            df.loc[len(df)] = [reg, name, due, due, today]
-
-        df.to_excel(month_file, index=False)
-        flash("Customer data updated.", "success")
-        return redirect('/home')
-
-    return render_template("main.html", page='home', page_title='Dashboard',
-                           data=df.to_dict(orient='records'), user=session['user'])
-
-@app.route('/logout')
-def logout():
-    session.pop('user', None)
-    flash("Logged out successfully!", "info")
-    return redirect('/login')
-
+# ✅ For Render — expose port 0.0.0.0
 if __name__ == '__main__':
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
